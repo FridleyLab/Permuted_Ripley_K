@@ -1,0 +1,36 @@
+#This script illustrates who the Ripley's K was computed for the tumor compartment of each TMA core.
+
+library(tidyverse)
+library(spatialTIME)
+load('data/TMA.clin_08172020.Rdata')
+
+#Changing column name and variable class so that merging is easier later on for statistical analysis.
+clin.data = clin.data %>% mutate(suid = as.character(suid))%>%
+  rename('subid' = 'suid')
+summary_tma = summary_tma %>% rename('image.tag' = `Image Tag`) %>%
+  mutate(suid = as.character(suid)) %>%
+  rename('subid' = 'suid')
+
+mif = create_mif(clinical_data = clin.data, sample_data = summary_tma, 
+                 spatial_list = tma.data, patient_id = 'subid', 
+                 sample_id = 'image.tag')
+                 
+#Identify the markers in the dataset
+markers = tma.data[[1]] %>% 
+  select(grep('CD|Positive', colnames(.), value = TRUE)) %>%
+  select(-grep('Nuc|Cyto', colnames(.), value = TRUE)) %>%
+  colnames()
+
+#Subset the cells in the spatial file to only be in the tumor compartment. 
+mif_tumor = subset_mif(mif = mif, classifier = 'Classifier.Label', level = 'Tumor', markers = markers)
+
+#Compute univariate and bivariate Ripley's K for each cell type and each combination of cell types.
+mif_tumor = ripleys_k(mif_tumor, mnames = markers, r_range = seq(0,200,10), num_permutations = 100, 
+                   edge_correction = 'trans', method = 'K', keep_perm_dis = FALSE, workers = 16)
+
+mif_tumor = bi_ripleys_k(mif_tumor, mnames = markers, r_range = seq(0,200,10), num_permutations = 100, 
+                      edge_correction = 'trans', method = 'K', keep_perm_dis = FALSE, 
+                      exhaustive = TRUE, workers = 16)
+
+
+
