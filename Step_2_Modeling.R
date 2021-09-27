@@ -1,15 +1,23 @@
-#This script conducts the cross validation and constructs the final survival models for each marker. This script was used for the intrarumoral ROIs, but
-#it can easily be revised to analyze the tumor compartments of the TMAs.
+#This script conducts the cross validation and constructs the final survival models for each marker. This script was 
+#used for the to analyze the tumor compartments of the TMAs, but it can easily be revised to analyze the intratumoral ROIs.
 
 library(spatialTIME)
 library(tidyverse)
 library(survival)
 library(survminer)
 
-#final_roi_data contains all clinical, summary, and spatial data for the intratumoral ROIs.
+clin_summ = inner_join(mif_tumor$clinical, mif_tumor$sample)
 
-#Rename marker
-final_roi_data = final_roi_data %>% 
+#Get all of the data into a single dataframe
+#Using a radius of 30, subsetting to the AAS study, 
+#and to the HGS histotype, rename markers
+final_data = clin_summ %>%
+  rename('image.tag' = image_tag) %>%
+  inner_join(mif_tumor$derived$univariate_Count) %>% 
+  mutate(suid = as.character(suid)) %>% 
+  filter(r == 30,
+         site == 'AAS',
+         histotype == "high-grade serous") %>%
   mutate(Marker = case_when(Marker == "CD11b..CD15." ~ "CD11b+ CD15+ Positive Cells",
                             Marker == "CD11b..Opal.620..Positive" ~ "CD11b (Opal 620) Positive Cells",
                             Marker == "CD15..Opal.520..Positive" ~ "CD15 (Opal 520) Positive Cells",
@@ -19,24 +27,26 @@ final_roi_data = final_roi_data %>%
                             Marker == "CD8..Opal.570..Positive" ~ "CD8 (Opal 570) Positive Cells",
                             Marker == "FOXP3..Opal.540..Positive" ~ "FOXP3 (Opal 540) Positive Cells")) %>%
   rename(
-    "CD11b+ CD15+ Positive Cells" = cd11bplus_cd15plus_cells,
-    "CD11b (Opal 620) Positive Cells" = cd11b_opal_620_positive_cells,
-    "CD15 (Opal 520) Positive Cells" = cd15_opal_520_positive_cells,
-    "CD3+ CD8+ Positive Cells" = cd3plus_cd8plus_cells,
-    "CD3+ FOXP3+ Positive Cells" = cd3plus_foxp3plus_cells,
-    "CD3 (Opal 650) Positive Cells" = cd3_opal_650_positive_cells,
-    "CD8 (Opal 570) Positive Cells" = cd8_opal_570_positive_cells,
-    "FOXP3 (Opal 540) Positive Cells" = foxp3_opal_540_positive_cells,
-    "% CD11b+ CD15+ Positive Cells" = percent_cd11bplus_cd15plus_positive_cells,
-    "% CD11b (Opal 620) Positive Cells" = percent_cd11b_opal_620_positive_cells,
-    "% CD15 (Opal 520) Positive Cells" = percent_cd15_opal_520_positive_cells,
-    "% CD3+ CD8+ Positive Cells" = percent_cd3plus_cd8plus_positive_cells,
-    "% CD3+ FOXP3+ Positive Cells" = percent_cd3plus_foxp3plus_positive_cells,
-    "% CD3 (Opal 650) Positive Cells" = percent_cd3_opal_650_positive_cells,
-    "% CD8 (Opal 570) Positive Cells" = percent_cd8_opal_570_positive_cells,
-    "% FOXP3 (Opal 540) Positive Cells" = percent_foxp3_opal_540_positive_cells
-    )
-
+    "CD11b+ CD15+ Positive Cells" = tumor_cd11bplus_cd15plus_cells,
+    "CD11b (Opal 620) Positive Cells" = tumor_cd11b_opal_620_positive_cells,
+    "CD15 (Opal 520) Positive Cells" = tumor_cd15_opal_520_positive_cells,
+    "CD3+ CD8+ Positive Cells" = tumor_cd3plus_cd8plus_cells,
+    "CD3+ FOXP3+ Positive Cells" = tumor_cd3plus_foxp3plus_cells,
+    "CD3 (Opal 650) Positive Cells" = tumor_cd3_opal_650_positive_cells,
+    "CD8 (Opal 570) Positive Cells" = tumor_cd8_opal_570_positive_cells,
+    "FOXP3 (Opal 540) Positive Cells" = tumor_foxp3_opal_540_positive_cells,
+    "% CD11b+ CD15+ Positive Cells" = tumor_percent_cd11bplus_cd15plus_positive_cells,
+    "% CD11b (Opal 620) Positive Cells" = tumor_percent_cd11b_opal_620_positive_cells,
+    "% CD15 (Opal 520) Positive Cells" = tumor_percent_cd15_opal_520_positive_cells,
+    "% CD3+ CD8+ Positive Cells" = tumor_percent_cd3plus_cd8plus_positive_cells,
+    "% CD3+ FOXP3+ Positive Cells" = tumor_percent_cd3plus_foxp3plus_positive_cells,
+    "% CD3 (Opal 650) Positive Cells" = tumor_percent_cd3_opal_650_positive_cells,
+    "% CD8 (Opal 570) Positive Cells" = tumor_percent_cd8_opal_570_positive_cells,
+    "% FOXP3 (Opal 540) Positive Cells" = tumor_percent_foxp3_opal_540_positive_cells
+  ) %>%
+  inner_join(fold_assignment)
+length(unique(final_data$suid))
+  
 
 #Extract marker names to loop through
 markers = unique(final_roi_data$Marker)
@@ -45,7 +55,7 @@ best = data.frame()
 for(marker in markers){
   print(marker)
 #subset to a particular marker and standardize the name for the sake of looping
-  data_by_marker = final_roi_data %>% 
+  data_by_marker = final_data %>% 
     filter(Marker == marker) %>%
     rename(Cell_Percent = paste('%', marker))
   
@@ -116,7 +126,7 @@ final_cut = best %>% group_by(Marker) %>%
 #Use the values from final_cut to construct the final models and make predicted curves
 models_roi = lapply(setNames(final_cut$Marker,final_cut$Marker), function(i){
   #Use the cutpoints that lead to the model where the spatial component explained the most variation to build the final model.
-  tmp = final_roi_data %>% 
+  tmp = final_data %>% 
     filter(Marker == i) %>%
     rename('Cell_Percent' = paste0('% ', i)) %>%
     mutate(five_group_percent = case_when(is.na(`Degree of Clustering Permutation`) == TRUE~ 'None',
