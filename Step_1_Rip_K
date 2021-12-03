@@ -1,7 +1,12 @@
-#This script illustrates who the Ripley's K was computed for the tumor compartment of each TMA core.
+#This script illustrates how the Ripley's K was computed for the tumor compartment of each TMA core.
+#100 permutations were performed for each sample
 
 library(tidyverse)
 library(spatialTIME)
+library(furrr)
+plan(multisession, workers = 16)
+
+#loading data
 load('data/TMA.clin_08172020.Rdata')
 
 #Changing column name and variable class so that merging is easier later on for statistical analysis.
@@ -11,8 +16,52 @@ summary_tma = summary_tma %>% rename('image.tag' = `Image Tag`) %>%
   mutate(suid = as.character(suid)) %>%
   rename('subid' = 'suid')
 
+#Idenfifying dual CD3+CD8+ CD3+FOXP3+
+dual_FOXP3_CD8 = sapply(tma.data, function(x){
+  x %>% 
+    select(contains(c("CD3", "FOXP3", "CD8"))) %>%
+    select(ends_with(".")) %>% 
+    mutate(dual_pos = `CD3..FOXP3.` + `CD3..CD8.`) %>% 
+    filter(dual_pos == 2) %>%
+    summarise(n = n())
+}) %>% 
+  do.call(rbind, .) %>%
+  data.frame(check.names=F) %>%
+  rename("dual_pos" = 1) %>%
+  filter(dual_pos != 0)
+
+cat(paste("\nNumber of TMAs with CD3CD8+ and CD3FOXP3+ cells before cleaning:\n", nrow(dual_FOXP3_CD8), sep=""))
+cat(paste("\nNumber of total cells marked with CD3CD8+ and CD3FOXP3+ before cleaning:\n", sum(dual_FOXP3_CD8[,1]), sep=""))
+
+#set FOXP3+ and CD8+ cells that were identified as being dual positive to 0
+#cells only positive for CD3 after
+tma.data2 = future_map(tma.data, function(x){
+  x %>% rowwise() %>%
+    mutate(dual_pos = ifelse(CD3..FOXP3. == 1 & CD3..CD8. == 1, 1, 0)) %>%
+    mutate_at(vars(contains(c("FOXP3", "CD8"))), ~ifelse(dual_pos == 1, 0, .)) %>%
+    select(-dual_pos) %>% ungroup()
+}, .progress=T)
+
+#check CD3+CD8+ and CD3+FOXP3 dual positivity again
+dual_FOXP3_CD8_2 = sapply(tma.data2, function(x){
+  x %>% 
+    select(contains(c("CD3", "FOXP3", "CD8"))) %>%
+    select(ends_with(".")) %>% 
+    mutate(dual_pos = `CD3..FOXP3.` + `CD3..CD8.`) %>% 
+    filter(dual_pos == 2) %>%
+    summarise(n = n())
+}) %>% 
+  do.call(rbind, .) %>%
+  data.frame(check.names=F) %>%
+  rename("dual_pos" = 1) %>%
+  filter(dual_pos != 0)
+
+cat(paste("\nNumber of TMAs with CD3CD8+ and CD3FOXP3+ cells before cleaning:\n", nrow(dual_FOXP3_CD8_2), sep=""))
+cat(paste("\nNumber of total cells marked with CD3CD8+ and CD3FOXP3+ before cleaning:\n", sum(dual_FOXP3_CD8_2[,1]), sep=""))
+
+#creating mif with fixed tma spatial data
 mif = create_mif(clinical_data = clin.data, sample_data = summary_tma, 
-                 spatial_list = tma.data, patient_id = 'subid', 
+                 spatial_list = tma.data2, patient_id = 'subid', 
                  sample_id = 'image.tag')
                  
 #Identify the markers in the dataset
@@ -25,10 +74,10 @@ markers = tma.data[[1]] %>%
 mif_tumor = subset_mif(mif = mif, classifier = 'Classifier.Label', level = 'Tumor', markers = markers)
 
 #Compute univariate and bivariate Ripley's K for each cell type and each combination of cell types.
-mif_tumor = ripleys_k(mif_tumor, mnames = markers, r_range = seq(0,200,10), num_permutations = 100, 
+mif_tumor = ripleys_k(mif_tumor, mnames = markers, r_range = seq(0,60,30), num_permutations = 100, 
                    edge_correction = 'trans', method = 'K', keep_perm_dis = FALSE, workers = 16)
 
-mif_tumor = bi_ripleys_k(mif_tumor, mnames = markers, r_range = seq(0,200,10), num_permutations = 100, 
+mif_tumor = bi_ripleys_k(mif_tumor, mnames = markers, r_range = seq(0,60,30), num_permutations = 100, 
                       edge_correction = 'trans', method = 'K', keep_perm_dis = FALSE, 
                       exhaustive = TRUE, workers = 16)
 
