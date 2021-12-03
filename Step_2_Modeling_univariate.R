@@ -57,10 +57,10 @@ for(marker in markers){
 #subset to a particular marker and standardize the name for the sake of looping
   data_by_marker = final_data %>% 
     filter(Marker == marker) %>%
-    rename(Cell_Percent = paste('%', marker))
+    rename(Cell_Percent = paste0('% ', marker))
   
 #Remove samples with 0 cells since they should not contribute to the spatial component
-  no_zeros = data_by_marker %>% filter(!is.na(`Degree of Clustering Permutation`)) 
+  no_zeros = data_by_marker %>% filter(!is.na(`Degree of Clustering Permutation`))
 
 #Enumerate the combinations of potential cuts for both abundance and degree of clustering (169 combinations)
   grid = expand_grid(abundance = quantile(no_zeros$Cell_Percent, seq(0.2,0.8,0.05)),
@@ -84,7 +84,7 @@ for(marker in markers){
                                                 `Degree of Clustering Permutation` > grid$clustering[b] ~ 'LH',
                                               Cell_Percent <= grid$abundance[b] &
                                                 `Degree of Clustering Permutation` <= grid$clustering[b] ~ 'LL'),
-               five_group_percent = factor(five_group_percent, levels = c('None','HH',"HL", "LH", 'LL')),
+               five_group_percent = factor(five_group_percent, levels = c('HH',"HL", "LH", 'LL','None')),
                stage = factor(stage)) %>% 
         select(suid, vitalstatus_new, timelastfu_new, stage, refage, stage,
                five_group_percent) %>% data.frame(check.names = FALSE)
@@ -121,14 +121,14 @@ for(marker in markers){
 final_cut = best %>% group_by(Marker) %>%
   filter(big_group == TRUE) %>%
   select(abundance, clustering) %>%
-  summarize_all(~median(.)) 
+  summarize_all(~median(.))
 
 #Use the values from final_cut to construct the final models and make predicted curves
 models_roi = lapply(setNames(final_cut$Marker,final_cut$Marker), function(i){
   #Use the cutpoints that lead to the model where the spatial component explained the most variation to build the final model.
   tmp = final_data %>% 
     filter(Marker == i) %>%
-    rename('Cell_Percent' = paste0('% ', i)) %>%
+    rename(Cell_Percent = paste0('% ', i)) %>%
     mutate(five_group_percent = case_when(is.na(`Degree of Clustering Permutation`) == TRUE~ 'None',
                                           Cell_Percent > final_cut$abundance[final_cut$Marker == i] &
                                             `Degree of Clustering Permutation` > final_cut$clustering[final_cut$Marker == i] ~ 'HH',
@@ -143,10 +143,12 @@ models_roi = lapply(setNames(final_cut$Marker,final_cut$Marker), function(i){
     select(suid, vitalstatus_new, timelastfu_new, stage, refage, stage,
            five_group_percent) %>% data.frame(check.names = FALSE)
   
+	#full model
   model = coxph(Surv(timelastfu_new, as.numeric(vitalstatus_new)) ~ refage + stage + five_group_percent + cluster(suid), 
                 data = tmp)
+	#reduced model
   model_2 = coxph(Surv(timelastfu_new, as.numeric(vitalstatus_new)) ~ refage + stage + cluster(suid), 
-                data = tmp)
+                  data = tmp)
   
   plot = ggadjustedcurves(model, data = tmp, variable = 'five_group_percent', size = 0.75) +   
     ggtitle(i) + labs(col="Group") + xlab('Time (Days)') + 
