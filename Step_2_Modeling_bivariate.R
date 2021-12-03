@@ -4,6 +4,7 @@ library(survminer)
 library(GGally)
 
 #Assign fold values for each patient, then merge with the sample data
+set.seed(333) #reproducibility
 clin_summ = mif_tumor$clinical %>% 
   mutate(fold = sample(1:10, nrow(.), replace = TRUE)) %>%
   inner_join(mif_tumor$sample)
@@ -58,8 +59,6 @@ final_data = clin_summ %>%
   #The following condition corresponds to when there was at least one cell type that was not present
   #but due to mislabelling of IF software packages cells can both be classifed as`CD3+ FOXP3+ Positive Cells`
   #and `CD3+ CD8+ Positive Cells` thus we need to check that this did not make a cell count 0. 
-  #(is.nan(`Degree of Clustering Permutation`) == TRUE &
-            `CD3+ FOXP3+ Positive Cells` > `CD3+ CD8+ Positive Cells`)
   mutate(
     Treg_Abundance_PA = if_else(
       (`CD3+ FOXP3+ Positive Cells` !=
@@ -91,50 +90,50 @@ best = data.frame()
 
 for(i in 1:nrow(pairs)){
 #define the possible cut points for each marker
-cuts = quantile(final_data %>% 
-                  filter(anchor == pairs$anchor[i],
-                         counted == pairs$counted[i]) %>%
-                  select(`Degree of Clustering Permutation`) %>%
-                  unlist(),
-                na.rm = TRUE, probs = seq(0.2,0.8,0.05)) %>%
-  data.frame(anchor = pairs$anchor[i], counted = pairs$counted[i], 
-             left_out = i, 'cut' = .)
+  cuts = quantile(final_data %>% 
+                    filter(anchor == pairs$anchor[i],
+                           counted == pairs$counted[i]) %>%
+                    select(`Degree of Clustering Permutation`) %>%
+                    unlist(),
+                  na.rm = TRUE, probs = seq(0.2,0.8,0.05)) %>%
+    data.frame(anchor = pairs$anchor[i], counted = pairs$counted[i], 
+               left_out = i, 'cut' = .)
 
-for(fold_lo in 1:10){
-for(b in 1:nrow(cuts)){
-#Construct model leaving one fold out and for a single marker 
-tmp = final_data %>% 
-  filter(fold != fold_lo,
-         anchor == pairs$anchor[i],
-         counted == pairs$counted[i]) %>%
-  mutate(Spatial_HL = case_when(Presence_anchor != 'P' | Presence_counted != 'P' | 
-                                  is.nan(`Degree of Clustering Permutation`) ~ 'N',
-                                Presence_anchor == 'P' & Presence_counted == 'P' & 
-                                  `Degree of Clustering Permutation` >= cuts$cut[b] ~ 'H',
-                                Presence_anchor == 'P' & Presence_counted == 'P' & 
-                                  `Degree of Clustering Permutation` < cuts$cut[b] ~ 'L'),
-         final_group = paste0(Presence_anchor, Presence_counted, Spatial_HL))
+  for(fold_lo in 1:10){
+    for(b in 1:nrow(cuts)){
+    #Construct model leaving one fold out and for a single marker 
+    tmp = final_data %>% 
+      filter(fold != fold_lo,
+             anchor == pairs$anchor[i],
+             counted == pairs$counted[i]) %>%
+      mutate(Spatial_HL = case_when(Presence_anchor != 'P' | Presence_counted != 'P' | 
+                                      is.nan(`Degree of Clustering Permutation`) ~ 'N',
+                                    Presence_anchor == 'P' & Presence_counted == 'P' & 
+                                      `Degree of Clustering Permutation` >= cuts$cut[b] ~ 'H',
+                                    Presence_anchor == 'P' & Presence_counted == 'P' & 
+                                      `Degree of Clustering Permutation` < cuts$cut[b] ~ 'L'),
+             final_group = paste0(Presence_anchor, Presence_counted, Spatial_HL))
 
-#Full model (spatial + clinical)
-model_lrt_1 = coxph(Surv(timelastfu_new, as.numeric(vitalstatus_new)) ~ refage + stage + final_group + cluster(suid), 
-                    data = tmp)
-                    #Reduced model (clinical only)
-model_lrt_2 = coxph(Surv(timelastfu_new, as.numeric(vitalstatus_new)) ~ refage + stage + cluster(suid), 
-                    data = tmp)
-                    
-#compute the log ratio test p-value
-cuts$lrt_log_lik_full[b] = summary(model_lrt_1)$loglik[2]
-cuts$lrt_log_lik_clinical[b] = summary(model_lrt_2)$loglik[2]
-cuts$lrt[b] = -2*log(cuts$lrt_log_lik_full[b] - cuts$lrt_log_lik_clinical[b])
-cuts$big_group[b] = all(table(tmp$final_group)[4:5] >= 10) #check if there are more than 10 images between the two groups
-cuts$n_AAN[b] = table(tmp$final_group)['AAN']
-cuts$n_APN[b] = table(tmp$final_group)['APN']
-cuts$n_PAN[b] = table(tmp$final_group)['PAN']
-cuts$n_PPL[b] = table(tmp$final_group)['PPL']
-cuts$n_PPH[b] = table(tmp$final_group)['PPH']
-cuts$total[b] = sum(table(tmp$final_group))
-}
-  
+    #Full model (spatial + clinical)
+    model_lrt_1 = coxph(Surv(timelastfu_new, as.numeric(vitalstatus_new)) ~ refage + stage + final_group + cluster(suid), 
+                        data = tmp)
+                        #Reduced model (clinical only)
+    model_lrt_2 = coxph(Surv(timelastfu_new, as.numeric(vitalstatus_new)) ~ refage + stage + cluster(suid), 
+                        data = tmp)
+
+    #compute the log ratio test p-value
+    cuts$lrt_log_lik_full[b] = summary(model_lrt_1)$loglik[2]
+    cuts$lrt_log_lik_clinical[b] = summary(model_lrt_2)$loglik[2]
+    cuts$lrt[b] = -2*log(cuts$lrt_log_lik_full[b] - cuts$lrt_log_lik_clinical[b])
+    cuts$big_group[b] = all(table(tmp$final_group)[4:5] >= 10) #check if there are more than 10 images between the two groups
+    cuts$n_AAN[b] = table(tmp$final_group)['AAN']
+    cuts$n_APN[b] = table(tmp$final_group)['APN']
+    cuts$n_PAN[b] = table(tmp$final_group)['PAN']
+    cuts$n_PPL[b] = table(tmp$final_group)['PPL']
+    cuts$n_PPH[b] = table(tmp$final_group)['PPH']
+    cuts$total[b] = sum(table(tmp$final_group))
+  }
+
   best = plyr::rbind.fill(best,
                           cuts %>% 
                             filter(!is.na(lrt)) %>%
@@ -143,7 +142,7 @@ cuts$total[b] = sum(table(tmp$final_group))
                             mutate(left_out = fold_lo,
                                    anchor = pairs$anchor[i],
                                    counted = pairs$counted[i]))
-}
+  }
 }
 
 #Getting the model summary for each marker
@@ -182,7 +181,9 @@ model = lapply(1:nrow(final_cut), function(i){
     theme(legend.title = element_text(size=20),  legend.text = element_text(size = 18))
   print(plot)
   return(list(model = model, plot = plot, 
-              n = table(tmp$final_group)))
+              n = table(tmp$final_group),
+              lrt = lrt,
+              p_value = 1-pchisq(lrt,4))
 }
 )
 
